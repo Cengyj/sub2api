@@ -23,15 +23,24 @@ func openAIReadableShadowKeys(principal, task string) (string, string, error) {
 	return "openai_readable_shadow:v1:" + scope + ":" + task, "openai_readable_shadow_index:v1:" + scope, nil
 }
 
-var putOpenAIReadableShadowScript = redis.NewScript(`
+// Values expire individually at their index score. Redis can prune a burst
+// of expired index entries without fetching each member into Lua.
+const openAIRecoveryIndexLua = `
 local now = redis.call('TIME')
 local millis = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
-local ttl = tonumber(ARGV[2])
-local expired = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', millis)
-for _, key in ipairs(expired) do
- redis.call('DEL', key)
- redis.call('ZREM', KEYS[2], key)
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', millis)
+local function makeRoom()
+ -- Reuse the indexed slot if Redis evicted the value before its TTL.
+ redis.call('ZREM', KEYS[2], KEYS[1])
+ while redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[3]) do
+  local oldest = redis.call('ZPOPMIN', KEYS[2])
+  redis.call('DEL', oldest[1])
+ end
 end
+`
+
+var putOpenAIReadableShadowScript = redis.NewScript(openAIRecoveryIndexLua + `
+local ttl = tonumber(ARGV[2])
 local old = redis.call('GET', KEYS[1])
 if old then
  if old ~= ARGV[1] then
@@ -40,11 +49,7 @@ if old then
  end
  return 0
 end
-while redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[3]) do
- local oldest = redis.call('ZRANGE', KEYS[2], 0, 0)
- redis.call('DEL', oldest[1])
- redis.call('ZREM', KEYS[2], oldest[1])
-end
+makeRoom()
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)
 redis.call('ZADD', KEYS[2], millis + ttl, KEYS[1])
 redis.call('PEXPIRE', KEYS[2], math.max(ttl, redis.call('PTTL', KEYS[2])))

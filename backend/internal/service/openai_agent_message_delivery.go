@@ -59,6 +59,15 @@ func newOpenAIAgentRecoveryDelivery(s *OpenAIGatewayService, ctx context.Context
 	return &openAIAgentRecoveryDelivery{toolEnabled: enabled, toolAnchors: anchors, toolAnchorsValid: valid, service: s, ctx: ctx, request: r, binding: b, pending: "pending:" + uuid.NewString() + ":" + encodeOpenAIAgentRecoveryBinding(b), keys: make(map[[32]byte]bool), epochs: make(map[string]bool)}
 }
 
+func (d *openAIAgentRecoveryDelivery) shadowEpochTTL() time.Duration {
+	ttl := d.service.openAIWSSessionStickyTTL()
+	if d.toolEnabled {
+		return min(ttl, OpenAIReadableShadowTTL)
+	}
+	// With 409 recovery off, retain only the existing shorter delivery fence.
+	return min(ttl, 30*time.Minute)
+}
+
 func (s *OpenAIGatewayService) awaitOpenAIAgentRecovery(ctx context.Context, shared OpenAIAgentRecoveryCache, state *openAIAgentRecoveryState, key [32]byte) (openAIAgentRecoveryBinding, bool, error) {
 	observedPending := false
 	var lastPending openAIAgentRecoveryBinding
@@ -122,7 +131,7 @@ func (d *openAIAgentRecoveryDelivery) reserve(items [][32]byte) error {
 		epochKey := d.request.shadowEpochKey(item)
 		if shared, ok := d.service.cache.(OpenAIAgentRecoveryEpochCache); ok && d.request.userID > 0 && !d.epochs[epochKey] {
 			d.epochs[epochKey] = true
-			if err := shared.ReserveOpenAIAgentRecoveryEpoch(ctx, epochKey, d.pending, d.service.openAIWSSessionStickyTTL()); err != nil {
+			if err := shared.ReserveOpenAIAgentRecoveryEpoch(ctx, epochKey, d.pending, d.shadowEpochTTL()); err != nil {
 				return openAIAgentRecoveryError("store_unavailable")
 			}
 		}
@@ -231,7 +240,7 @@ func (d *openAIAgentRecoveryDelivery) finish(completed bool) {
 			for key := range d.epochs {
 				// Failed/unknown publication leaves no eligible record matching
 				// this epoch. An ambiguous CAS cannot restore an older epoch.
-				_ = shared.FinishOpenAIAgentRecoveryEpoch(ctx, key, d.pending, eligible[key], d.service.openAIWSSessionStickyTTL())
+				_ = shared.FinishOpenAIAgentRecoveryEpoch(ctx, key, d.pending, eligible[key], d.shadowEpochTTL())
 			}
 		}
 		if d.service.cache == nil && d.toolEnabled {

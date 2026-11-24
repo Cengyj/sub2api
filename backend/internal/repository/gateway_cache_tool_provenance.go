@@ -17,20 +17,11 @@ func openAIToolProvenanceKeys(scope string) (string, string, error) {
 
 // A call ID cannot be reissued by another delivery and inherit its old grant.
 // Budget/TTL eviction loses recoverability, never creates proof.
-var reserveOpenAIToolProvenance = redis.NewScript(`
-local now = redis.call('TIME')
-local millis = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
-local expired = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', millis)
-for _, key in ipairs(expired) do redis.call('DEL', key); redis.call('ZREM', KEYS[2], key) end
+var reserveOpenAIToolProvenance = redis.NewScript(openAIRecoveryIndexLua + `
 local old = redis.call('GET', KEYS[1])
 local ttl = math.max(tonumber(ARGV[2]), redis.call('PTTL', KEYS[1]))
 if old == ARGV[1] then return 1 end
-if not old then
- while redis.call('ZCARD', KEYS[2]) >= 128 do
-  local oldest = redis.call('ZRANGE', KEYS[2], 0, 0)
-  redis.call('DEL', oldest[1]); redis.call('ZREM', KEYS[2], oldest[1])
- end
-end
+if not old then makeRoom() end
 local value = ARGV[1]
 if old then value = 'conflict' end
 redis.call('SET', KEYS[1], value, 'PX', ttl)
@@ -71,7 +62,7 @@ func (c *gatewayCache) ReserveOpenAIToolProvenance(ctx context.Context, scope, t
 	if !strings.HasPrefix(token, "pending:") || len(token) > 1024 || ttl <= 0 {
 		return errors.New("invalid tool provenance reservation")
 	}
-	return reserveOpenAIToolProvenance.Run(ctx, c.rdb, []string{key, index}, token, min(ttl, service.OpenAIReadableShadowTTL).Milliseconds()).Err()
+	return reserveOpenAIToolProvenance.Run(ctx, c.rdb, []string{key, index}, token, min(ttl, service.OpenAIReadableShadowTTL).Milliseconds(), service.OpenAIRecoveryMetadataMaxRecords).Err()
 }
 func (c *gatewayCache) FinishOpenAIToolProvenance(ctx context.Context, scope, token, record string, completed bool, ttl time.Duration) error {
 	key, index, err := openAIToolProvenanceKeys(scope)

@@ -192,6 +192,7 @@ func httpRebuildToolPair(body []byte, name, output string) bool {
 // AST-based verification. No external command, repository edit or real effect.
 type httpRebuildTools struct {
 	additional    func(*testing.T, gjson.Result) (string, bool)
+	patchDetails  string
 	source        string
 	patches       int
 	verifications int
@@ -219,7 +220,7 @@ func (tools *httpRebuildTools) execute(t *testing.T, response gjson.Result) []st
 			tools.source = arguments.Get("source").String()
 			require.Equal(t, httpRebuildSource, tools.source)
 			tools.patches++
-			output = httpRebuildPatch
+			output = httpRebuildPatch + tools.patchDetails
 		case "run_tests":
 			require.Equal(t, 1, tools.patches)
 			require.Zero(t, tools.verifications, "completed verification must never execute again")

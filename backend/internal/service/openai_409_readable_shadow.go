@@ -17,9 +17,12 @@ import (
 // Bounded, optional shared data plane. There is deliberately no local fallback.
 // The principal budget spans all groups, models, sessions and task identities.
 const (
-	OpenAIReadableShadowMaxBytes   = 64 * 1024
-	OpenAIReadableShadowMaxRecords = 8
-	OpenAIReadableShadowTTL        = 30 * time.Minute
+	OpenAIReadableShadowMaxBytes   = 256 * 1024
+	OpenAIReadableShadowMaxRecords = 8192
+	OpenAIReadableShadowTTL        = time.Hour
+	// Epochs cover in-flight deliveries too. Tool proofs can cover several calls per task.
+	// Each metadata namespace has its own per-principal budget.
+	OpenAIRecoveryMetadataMaxRecords = 4 * OpenAIReadableShadowMaxRecords
 )
 
 type OpenAIReadableShadowCache interface {

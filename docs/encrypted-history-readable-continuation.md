@@ -27,7 +27,7 @@
 | 非 Beta 的完整密文 owner-binding opt-out | 独立路径；本 PR 不宣称修复 Issue #842 的普通元数据规范化矩阵 |
 | 真实供应商兼容 | 既往维护报告记录了 `afa7dbd6f` 的 API-key HTTP response-pointer A→B 工具循环；不代表当前 head、OAuth、opaque-agent 或 WS 的真实供应商验收 |
 
-Readable shadow 使用共享 Redis，按用户/API Key、分组、模型、会话和精确任务隔离。每个用户/API Key 总计最多 8 条，每条最多 64 KiB，TTL 最多 30 分钟；不回退到本地存储。它包含可读任务上下文，只有 Beta 开启时发布/恢复，管理员应将其纳入 Redis 的数据保留范围。投递 epoch 和原 owner 独立，失效、冲突、过期或存储不可用时不能借用旧任务。详见 [shadow 约束](future-readable-shadow.md)。
+Readable shadow 使用共享 Redis，按用户/API Key、分组、模型、会话和精确任务隔离。同一用户的每把 API Key 跨所有分组、模型和会话最多保留 8,192 条，每条最多 256 KiB，正文合计最多 2 GiB，最长保留 1 小时。如果部署将 `gateway.openai_ws.sticky_session_ttl_seconds` 设为小于 3,600 秒的值，正文和对应的交付校验记录也按该较短时长到期。进行中和已交付任务的恢复校验记录（epoch）、已交付工具调用的校验凭据各有独立的上限，每把 Key 各最多 32,768 条。共享存储不可用时停止恢复。它包含可读任务上下文，只有 Beta 开启时发布/恢复，管理员应将其纳入 Redis 的数据保留范围。投递 epoch 和原 owner 独立，失效、冲突、过期或存储不可用时不能借用旧任务。详见 [shadow 约束](future-readable-shadow.md)。
 
 没有新增数据库迁移或设置。旧版不能消费新 shadow 的完整恢复语义；回退时关闭 Beta、排空在途请求及旧 WS 后按正常流程切换，不以清空 owner 记录恢复会话。此次源码合并本身不改变线上开关或部署版本。
 

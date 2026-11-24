@@ -32,6 +32,7 @@ import (
 
 const shadowHTTPAgent = `{"type":"agent_message","author":"/root","recipient":"/root/worker","encrypted_content":"fixture-shadow-current-task"}`
 const shadowOtherTask = "Verify the existing sum.go only; do not edit it. This is independent task Y."
+const shadowRecordLimit = 256 * 1024
 
 type shadowAuditProbe struct{ evaluated, private atomic.Bool }
 
@@ -158,6 +159,15 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 	var providerHeaders []http.Header
 	reusedOutput := scenario == "conflicting_output" || scenario == "echoed_task"
 	twoTasks := scenario == "two_known_tasks" || reusedOutput
+	patchBytes := len(httpRebuildPatch)
+	switch scenario {
+	case "recover":
+		patchBytes = 128 * 1024
+	case "oversize":
+		patchBytes = shadowRecordLimit + 1
+	}
+	patchDetails := strings.Repeat("x", patchBytes-len(httpRebuildPatch))
+	expectedPatch := httpRebuildPatch + patchDetails
 	patch := httpRebuildCall("apply_patch", "call_shadow_patch", map[string]any{"path": "sum.go", "source": httpRebuildSource})
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -181,7 +191,7 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 			}
 			output = []json.RawMessage{json.RawMessage(httpRebuildCall("run_tests", "call_shadow_Y_verify", map[string]any{"path": "sum.go"}))}
 		case r.Header.Get("Authorization") == "Bearer fixture-shadow-A" && n >= 2:
-			validPair := httpRebuildToolPair(body, "apply_patch", httpRebuildPatch)
+			validPair := httpRebuildToolPair(body, "apply_patch", expectedPatch)
 			if twoTasks && n == 4 {
 				validPair = httpRebuildToolPair(body, "run_tests", httpRebuildCheck) && strings.Contains(string(body), shadowOtherTask)
 			}
@@ -213,7 +223,7 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 			if scenario == "fresh_intent" {
 				valid = valid && strings.Contains(string(body), "Report only the supplied fresh task") && !strings.Contains(string(body), httpRebuildTask)
 			} else {
-				valid = valid && strings.Contains(string(body), httpRebuildTask) && httpRebuildToolPair(body, "apply_patch", httpRebuildPatch)
+				valid = valid && strings.Contains(string(body), httpRebuildTask) && httpRebuildToolPair(body, "apply_patch", expectedPatch)
 			}
 			if scenario == "two_known_tasks" {
 				associationValid := strings.Contains(string(body), httpRebuildTask) && httpRebuildToolPair(body, "apply_patch", httpRebuildPatch) &&
@@ -347,15 +357,11 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 		}
 		return response.StatusCode, string(answer)
 	}
-	task := httpRebuildTask
-	if scenario == "oversize" {
-		task += strings.Repeat(" fixture long task", 5000)
-	}
-	history := []string{httpRebuildMessage("user", task)}
+	history := []string{httpRebuildMessage("user", httpRebuildTask)}
 	status, answer := request(history, false)
 	require.Equal(t, http.StatusOK, status, answer)
 	first := issue758CompletedResponse(t, answer, stream)
-	tool := &httpRebuildTools{}
+	tool := &httpRebuildTools{patchDetails: patchDetails}
 	for _, item := range first.Get("output").Array() {
 		history = append(history, item.Raw)
 	}
@@ -400,6 +406,8 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 	}
 	capacity := strings.HasPrefix(scenario, "capacity_")
 	if capacity {
+		// Cross the former body and epoch limits using independent, delivered
+		// sessions. Repository tests exercise eviction at the full Redis limits.
 		for i := 0; i < 140; i++ {
 			currentSession = fmt.Sprintf("fixture-shadow-thread-%d", i)
 			status, answer = request(history, false)
@@ -438,25 +446,25 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 	if capacity {
 		epochKeys, err := probe.Keys(context.Background(), "openai_agent_shadow_epoch:v1:*").Result()
 		require.NoError(t, err)
-		require.Len(t, epochKeys, 128, "association metadata must also be bounded across sessions")
+		require.Len(t, epochKeys, ownerCount, "each delivered task must retain its association")
 		indexes, err := probe.Keys(context.Background(), "openai_agent_shadow_index:v1:*").Result()
 		require.NoError(t, err)
 		require.Len(t, indexes, 1)
 		count, err := probe.ZCard(context.Background(), indexes[0]).Result()
 		require.NoError(t, err)
-		require.EqualValues(t, 128, count)
+		require.EqualValues(t, ownerCount, count)
 		ttl, err := probe.PTTL(context.Background(), indexes[0]).Result()
 		require.NoError(t, err)
-		require.Greater(t, ttl, time.Duration(0))
-		require.LessOrEqual(t, ttl, 30*time.Minute)
-		require.Len(t, shadowKeys, 8, "SHADOW_CAPACITY_UNBOUNDED: all sessions/models share the principal's eight-record budget")
+		require.Greater(t, ttl, 59*time.Minute)
+		require.LessOrEqual(t, ttl, time.Hour)
+		require.Len(t, shadowKeys, ownerCount, "all delivered sessions should fit in the principal's budget")
 		total := 0
 		for _, key := range shadowKeys {
 			value, err := probe.Get(context.Background(), key).Result()
 			require.NoError(t, err)
 			total += len(value)
 		}
-		require.LessOrEqual(t, total, 512*1024, "shadow payload bytes must be bounded across sessions")
+		require.LessOrEqual(t, total, ownerCount*shadowRecordLimit)
 	}
 	if scenario == "store_read_failed" {
 		require.NotEmpty(t, shadowKeys, "read fault must operate on a real committed record")
@@ -489,7 +497,7 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 	status, answer = request(input, true)
 	mu.Lock()
 	defer mu.Unlock()
-	if scenario == "recover" || scenario == "fresh_intent" || scenario == "capacity_latest" || scenario == "two_known_tasks" || scenario == "privacy" {
+	if scenario == "recover" || scenario == "fresh_intent" || capacity || scenario == "two_known_tasks" || scenario == "privacy" {
 		require.Len(t, bodies, producerRequests+1, "FUTURE_SHADOW_B_DISPATCH_MISSING: committed same-task context must reach B without manual input; response=%s", answer)
 		require.Equal(t, http.StatusOK, status, answer)
 		completed := issue758CompletedResponse(t, answer, stream)
@@ -522,14 +530,26 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 		require.Equal(t, 1, tool.patches, "completed side effect was reused, never executed again")
 		if scenario == "recover" {
 			require.NotEmpty(t, shadowKeys, "cross-node recovery must use the shared store")
+			// Dependencies for a restored task must survive as long as its body.
+			for _, pattern := range []string{"openai_agent_owner:v1:*", "openai_agent_shadow_epoch:v1:*", "openai_tool_provenance:v1:*"} {
+				keys, err := probe.Keys(context.Background(), pattern).Result()
+				require.NoError(t, err)
+				require.NotEmpty(t, keys)
+				for _, key := range keys {
+					ttl, err := probe.PTTL(context.Background(), key).Result()
+					require.NoError(t, err)
+					require.Greater(t, ttl, 59*time.Minute, pattern)
+				}
+			}
 			for _, key := range shadowKeys {
 				ttl, err := probe.PTTL(context.Background(), key).Result()
 				require.NoError(t, err)
-				require.Greater(t, ttl, time.Duration(0))
-				require.LessOrEqual(t, ttl, 30*time.Minute, "shadow retention must be bounded")
+				require.Greater(t, ttl, 59*time.Minute)
+				require.LessOrEqual(t, ttl, time.Hour, "shadow retention must be bounded")
 				value, err := probe.Get(context.Background(), key).Result()
 				require.NoError(t, err)
-				require.LessOrEqual(t, len(value), 64*1024, "each shadow record must be bounded")
+				require.LessOrEqual(t, len(value), shadowRecordLimit)
+				require.True(t, httpRebuildToolPair([]byte(value), "apply_patch", expectedPatch), "the committed record must contain the complete tool result")
 			}
 		}
 	} else {
