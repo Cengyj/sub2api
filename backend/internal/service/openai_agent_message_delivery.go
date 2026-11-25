@@ -60,12 +60,7 @@ func newOpenAIAgentRecoveryDelivery(s *OpenAIGatewayService, ctx context.Context
 }
 
 func (d *openAIAgentRecoveryDelivery) shadowEpochTTL() time.Duration {
-	ttl := d.service.openAIWSSessionStickyTTL()
-	if d.toolEnabled {
-		return min(ttl, OpenAIReadableShadowTTL)
-	}
-	// With 409 recovery off, retain only the existing shorter delivery fence.
-	return min(ttl, 30*time.Minute)
+	return min(d.service.openAIWSSessionStickyTTL(), OpenAIReadableShadowTTL)
 }
 
 func (s *OpenAIGatewayService) awaitOpenAIAgentRecovery(ctx context.Context, shared OpenAIAgentRecoveryCache, state *openAIAgentRecoveryState, key [32]byte) (openAIAgentRecoveryBinding, bool, error) {

@@ -30,7 +30,7 @@ var reserveOpenAIAgentShadowEpoch = redis.NewScript(openAIRecoveryIndexLua + `
 local old = redis.call('GET', KEYS[1])
 local ttl = math.max(tonumber(ARGV[2]), redis.call('PTTL', KEYS[1]))
 if old == ARGV[1] then return 1 end
-if not old then makeRoom() end
+if not old and not makeRoom() then return 0 end
 redis.call('ZADD', KEYS[2], millis + ttl, KEYS[1])
 redis.call('PEXPIRE', KEYS[2], math.max(ttl, redis.call('PTTL', KEYS[2])))
 if old and (old == 'conflict' or string.sub(old, 1, 8) == 'pending:') then

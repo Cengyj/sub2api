@@ -32,7 +32,7 @@ import (
 
 const shadowHTTPAgent = `{"type":"agent_message","author":"/root","recipient":"/root/worker","encrypted_content":"fixture-shadow-current-task"}`
 const shadowOtherTask = "Verify the existing sum.go only; do not edit it. This is independent task Y."
-const shadowRecordLimit = 256 * 1024
+const shadowRecordLimit = 1536 * 1024
 
 type shadowAuditProbe struct{ evaluated, private atomic.Bool }
 
@@ -162,7 +162,7 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 	patchBytes := len(httpRebuildPatch)
 	switch scenario {
 	case "recover":
-		patchBytes = 128 * 1024
+		patchBytes = 1500 * 1024
 	case "oversize":
 		patchBytes = shadowRecordLimit + 1
 	}
@@ -455,8 +455,8 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 		require.EqualValues(t, ownerCount, count)
 		ttl, err := probe.PTTL(context.Background(), indexes[0]).Result()
 		require.NoError(t, err)
-		require.Greater(t, ttl, 59*time.Minute)
-		require.LessOrEqual(t, ttl, time.Hour)
+		require.Greater(t, ttl, 29*time.Minute)
+		require.LessOrEqual(t, ttl, 30*time.Minute)
 		require.Len(t, shadowKeys, ownerCount, "all delivered sessions should fit in the principal's budget")
 		total := 0
 		for _, key := range shadowKeys {
@@ -538,14 +538,17 @@ func runFutureShadowTransport(t *testing.T, accountType string, stream bool, sce
 				for _, key := range keys {
 					ttl, err := probe.PTTL(context.Background(), key).Result()
 					require.NoError(t, err)
-					require.Greater(t, ttl, 59*time.Minute, pattern)
+					require.Greater(t, ttl, 29*time.Minute, pattern)
+					if pattern != "openai_agent_owner:v1:*" {
+						require.LessOrEqual(t, ttl, 30*time.Minute, pattern)
+					}
 				}
 			}
 			for _, key := range shadowKeys {
 				ttl, err := probe.PTTL(context.Background(), key).Result()
 				require.NoError(t, err)
-				require.Greater(t, ttl, 59*time.Minute)
-				require.LessOrEqual(t, ttl, time.Hour, "shadow retention must be bounded")
+				require.Greater(t, ttl, 29*time.Minute)
+				require.LessOrEqual(t, ttl, 30*time.Minute, "shadow retention must be bounded")
 				value, err := probe.Get(context.Background(), key).Result()
 				require.NoError(t, err)
 				require.LessOrEqual(t, len(value), shadowRecordLimit)

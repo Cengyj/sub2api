@@ -32,10 +32,16 @@ redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', millis)
 local function makeRoom()
  -- Reuse the indexed slot if Redis evicted the value before its TTL.
  redis.call('ZREM', KEYS[2], KEYS[1])
- while redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[3]) do
-  local oldest = redis.call('ZPOPMIN', KEYS[2])
-  redis.call('DEL', oldest[1])
+ local excess = redis.call('ZCARD', KEYS[2]) - tonumber(ARGV[3]) + 1
+ if excess <= 0 then return true end
+ -- Existing indexes can exceed a reduced limit. Trim one batch per write.
+ local oldest = redis.call('ZPOPMIN', KEYS[2], math.min(excess, 64))
+ local keys = {}
+ for i = 1, #oldest, 2 do keys[#keys + 1] = oldest[i] end
+ if #keys > 0 then
+  redis.call('UNLINK', unpack(keys))
  end
+ return #keys == excess
 end
 `
 
@@ -49,7 +55,7 @@ if old then
  end
  return 0
 end
-makeRoom()
+if not makeRoom() then return 0 end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)
 redis.call('ZADD', KEYS[2], millis + ttl, KEYS[1])
 redis.call('PEXPIRE', KEYS[2], math.max(ttl, redis.call('PTTL', KEYS[2])))

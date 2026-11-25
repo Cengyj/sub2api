@@ -27,7 +27,11 @@
 | 非 Beta 的完整密文 owner-binding opt-out | 独立路径；本 PR 不宣称修复 Issue #842 的普通元数据规范化矩阵 |
 | 真实供应商兼容 | 既往维护报告记录了 `afa7dbd6f` 的 API-key HTTP response-pointer A→B 工具循环；不代表当前 head、OAuth、opaque-agent 或 WS 的真实供应商验收 |
 
-Readable shadow 使用共享 Redis，按用户/API Key、分组、模型、会话和精确任务隔离。同一用户的每把 API Key 跨所有分组、模型和会话最多保留 8,192 条，每条最多 256 KiB，正文合计最多 2 GiB，最长保留 1 小时。如果部署将 `gateway.openai_ws.sticky_session_ttl_seconds` 设为小于 3,600 秒的值，正文和对应的交付校验记录也按该较短时长到期。进行中和已交付任务的恢复校验记录（epoch）、已交付工具调用的校验凭据各有独立的上限，每把 Key 各最多 32,768 条。共享存储不可用时停止恢复。它包含可读任务上下文，只有 Beta 开启时发布/恢复，管理员应将其纳入 Redis 的数据保留范围。投递 epoch 和原 owner 独立，失效、冲突、过期或存储不可用时不能借用旧任务。详见 [shadow 约束](future-readable-shadow.md)。
+Readable shadow 使用共享 Redis，按用户/API Key、分组、模型、会话和精确任务隔离。同一用户的每把 API Key 跨所有分组、模型和会话最多保留 500 条，每条最多 1.5 MiB，正文记录合计最多 750 MiB。1.5 MiB 按写入 Redis 的完整序列化记录计算，包含任务、工具结果和校验字段。容量设计参考 256K token 的上下文，按常见英文约 4 字节/token 粗估，并给 JSON 和工具结果预留空间。实际能保存的 token 数取决于内容和序列化后的大小。
+
+新写入的正文、交付校验记录和工具来源凭据最长保留 30 分钟。如果 `gateway.openai_ws.sticky_session_ttl_seconds` 小于 1,800 秒，正文和对应的交付校验记录按该较短时长到期。交付校验记录（epoch）与工具来源凭据各有独立额度，每把 Key 各最多 2,000 条。Redis 索引和独立校验记录的内存另计。存量记录沿用已有的到期时间。旧索引超过新上限时，同一索引后续每次新增最多淘汰 64 条最早到期的存量记录，仍无空位时跳过本次写入。
+
+共享存储不可用时停止恢复。它包含可读任务上下文，只有 Beta 开启时发布/恢复，管理员应将其纳入 Redis 的数据保留范围。投递 epoch 和原 owner 独立，失效、冲突、过期或存储不可用时不能借用旧任务。详见 [shadow 约束](future-readable-shadow.md)。
 
 没有新增数据库迁移或设置。旧版不能消费新 shadow 的完整恢复语义；回退时关闭 Beta、排空在途请求及旧 WS 后按正常流程切换，不以清空 owner 记录恢复会话。此次源码合并本身不改变线上开关或部署版本。
 

@@ -21,7 +21,7 @@ var reserveOpenAIToolProvenance = redis.NewScript(openAIRecoveryIndexLua + `
 local old = redis.call('GET', KEYS[1])
 local ttl = math.max(tonumber(ARGV[2]), redis.call('PTTL', KEYS[1]))
 if old == ARGV[1] then return 1 end
-if not old then makeRoom() end
+if not old and not makeRoom() then return 0 end
 local value = ARGV[1]
 if old then value = 'conflict' end
 redis.call('SET', KEYS[1], value, 'PX', ttl)

@@ -17,9 +17,10 @@ import (
 // Bounded, optional shared data plane. There is deliberately no local fallback.
 // The principal budget spans all groups, models, sessions and task identities.
 const (
-	OpenAIReadableShadowMaxBytes   = 256 * 1024
-	OpenAIReadableShadowMaxRecords = 8192
-	OpenAIReadableShadowTTL        = time.Hour
+	// Budget for a 256K-token context plus JSON and tool-result overhead.
+	OpenAIReadableShadowMaxBytes   = 1536 * 1024
+	OpenAIReadableShadowMaxRecords = 500
+	OpenAIReadableShadowTTL        = 30 * time.Minute
 	// Epochs cover in-flight deliveries too. Tool proofs can cover several calls per task.
 	// Each metadata namespace has its own per-principal budget.
 	OpenAIRecoveryMetadataMaxRecords = 4 * OpenAIReadableShadowMaxRecords
