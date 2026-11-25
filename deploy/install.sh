@@ -125,11 +125,11 @@ declare -A MSG_ZH=(
     ["upgrade_complete"]="升级完成！"
 
     # Version install
-    ["installing_version"]="正在安装指定版本"
+    ["target_version"]="目标版本"
     ["version_not_found"]="指定版本不存在"
     ["same_version"]="已经是该版本，无需操作"
     ["rollback_complete"]="版本回退完成！"
-    ["install_version_complete"]="指定版本安装完成！"
+    ["install_version_complete"]="已切换到指定版本！"
     ["validating_version"]="正在验证版本..."
     ["available_versions"]="可用版本列表"
     ["fetching_versions"]="正在获取可用版本..."
@@ -250,11 +250,11 @@ declare -A MSG_EN=(
     ["upgrade_complete"]="Upgrade completed!"
 
     # Version install
-    ["installing_version"]="Installing specified version"
+    ["target_version"]="Target version"
     ["version_not_found"]="Specified version not found"
     ["same_version"]="Already at this version, no action needed"
     ["rollback_complete"]="Version rollback completed!"
-    ["install_version_complete"]="Specified version installed!"
+    ["install_version_complete"]="Switched to the specified version!"
     ["validating_version"]="Validating version..."
     ["available_versions"]="Available versions"
     ["fetching_versions"]="Fetching available versions..."
@@ -615,7 +615,9 @@ validate_version() {
 get_current_version() {
     if [ -f "$INSTALL_DIR/sub2api" ]; then
         # Use grep -E for better compatibility (works on macOS and Linux)
-        "$INSTALL_DIR/sub2api" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+        local version
+        version=$("$INSTALL_DIR/sub2api" --version 2>&1 | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1) || true
+        echo "${version:-unknown}"
     else
         echo "not_installed"
     fi
@@ -912,7 +914,7 @@ upgrade() {
     print_info "$(msg 'upgrading')"
 
     # Get current version
-    CURRENT_VERSION=$("$INSTALL_DIR/sub2api" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
+    CURRENT_VERSION=$(get_current_version)
     print_info "$(msg 'current_version'): $CURRENT_VERSION"
 
     # Stop service
@@ -955,12 +957,11 @@ install_version() {
     # Validate and normalize version
     target_version=$(validate_version "$target_version")
 
-    print_info "$(msg 'installing_version'): $target_version"
-
     # Get current version
     local current_version
     current_version=$(get_current_version)
     print_info "$(msg 'current_version'): $current_version"
+    print_info "$(msg 'target_version'): $target_version"
 
     # Check if same version
     if [ "$current_version" = "$target_version" ] || [ "$current_version" = "${target_version#v}" ]; then
@@ -1122,7 +1123,20 @@ main() {
     # Restore positional arguments
     set -- "${positional_args[@]}"
 
-    # Select language first
+    case "${1:-}" in
+        upgrade|update)
+            check_root
+            detect_platform
+            check_dependencies
+            if [ -n "$target_version" ]; then
+                install_version "$target_version"
+            else
+                upgrade
+            fi
+            return
+            ;;
+    esac
+
     select_language
 
     echo ""
@@ -1143,19 +1157,6 @@ main() {
             shift
             python3 "$worker_migration" "$@"
             exit $?
-            ;;
-        upgrade|update)
-            check_root
-            detect_platform
-            check_dependencies
-            if [ -n "$target_version" ]; then
-                # Upgrade to specific version
-                install_version "$target_version"
-            else
-                # Upgrade to latest
-                upgrade
-            fi
-            exit 0
             ;;
         install)
             # Install with optional version
