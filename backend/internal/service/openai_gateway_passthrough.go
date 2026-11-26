@@ -168,10 +168,21 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	if account != nil && account.UsesOpenAICodexProtocol() {
-		if rejectReason := detectOpenAIPassthroughInstructionsRejectReason(reqModel, body); rejectReason != "" {
+		// Instruction policy follows the model actually sent after portable or
+		// compact mapping. Unmapped passthrough retains its field-preservation contract.
+		instructionsModel := reqModel
+		if upstreamPassthroughModel != "" {
+			instructionsModel = upstreamPassthroughModel
+		}
+		// A provider prefix containing "codex" is not a Codex model identity.
+		switch normalized := normalizeOpenAIGPT62Model(instructionsModel); normalized {
+		case "gpt-6.2-sol", "gpt-6.2-astra":
+			instructionsModel = normalized
+		}
+		if rejectReason := detectOpenAIPassthroughInstructionsRejectReason(instructionsModel, body); rejectReason != "" {
 			rejectMsg := "OpenAI codex passthrough requires a non-empty instructions field"
 			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
-			logOpenAIPassthroughInstructionsRejected(ctx, c, account, reqModel, rejectReason, body)
+			logOpenAIPassthroughInstructionsRejected(ctx, c, account, instructionsModel, rejectReason, body)
 			c.JSON(http.StatusForbidden, gin.H{
 				"error": gin.H{
 					"type":    "forbidden_error",
@@ -180,8 +191,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			})
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
-		if isOpenAICodexModel(reqModel) && !gjson.GetBytes(body, "instructions").Exists() {
-			nextBody, setErr := sjson.SetBytes(body, "instructions", defaultCodexSynthInstructions(reqModel))
+		if isOpenAICodexModel(instructionsModel) && !gjson.GetBytes(body, "instructions").Exists() {
+			nextBody, setErr := sjson.SetBytes(body, "instructions", defaultCodexSynthInstructions(instructionsModel))
 			if setErr != nil {
 				return nil, fmt.Errorf("set passthrough codex instructions: %w", setErr)
 			}

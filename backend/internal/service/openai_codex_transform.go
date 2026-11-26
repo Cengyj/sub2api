@@ -1402,13 +1402,19 @@ func extractPromptLikeInstructionsFromInput(reqBody map[string]any) string {
 }
 
 // defaultCodexSynthInstructions returns the compatibility default for an empty
-// instructions field. GPT-6.1 Sol accepts an empty field: do not turn an ordinary
-// API request into a Codex coding task or charge for an unsolicited base prompt.
+// instructions field. GPT-6.1 Sol and GPT-6.2 Sol/Astra use an empty default.
+// Keep this request policy separate from the full templates in the model catalog.
 //
 // Other models keep their existing model-specific Codex prompt and nonempty
 // fallback for upstream compatibility.
 func defaultCodexSynthInstructions(model string) string {
 	if openai.IsGPT61SolModelSpelling(model) {
+		return ""
+	}
+	// Use the service normalizer for dated aliases and the independent Astra
+	// Pro identity, then exempt only the two exact model IDs.
+	switch normalizeOpenAIGPT62Model(model) {
+	case "gpt-6.2-sol", "gpt-6.2-astra":
 		return ""
 	}
 	if instructions := strings.TrimSpace(openai.CodexBaseInstructionsForModel(model)); instructions != "" {
