@@ -830,6 +830,7 @@ func TestEmbeddedFrontendBypassesBareAPIAliases(t *testing.T) {
 		"/contents/generations/tasks/task-123",
 		"/v3/contents/generations/tasks",
 		"/v3/contents/generations/tasks/task-123",
+		"/v3/other",
 	} {
 		require.True(t, shouldBypassEmbeddedFrontend(path), "path=%s", path)
 	}
@@ -839,9 +840,32 @@ func TestEmbeddedFrontendBypassesBareAPIAliases(t *testing.T) {
 		"/custom/page-1",
 		"/monitor",
 		"/setup",
-		"/v3/other",
 	} {
 		require.False(t, shouldBypassEmbeddedFrontend(path), "path=%s", path)
+	}
+}
+
+func TestEmbeddedFrontendUnknownV3RouteReturnsNotFound(t *testing.T) {
+	provider := &mockSettingsProvider{settings: map[string]string{"test": "value"}}
+	server, err := NewFrontendServer(provider)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name       string
+		middleware gin.HandlerFunc
+	}{
+		{"server", server.Middleware()},
+		{"legacy", ServeEmbeddedFrontend()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(tc.middleware)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v3/other", nil))
+
+			assert.Equal(t, http.StatusNotFound, w.Code)
+			assert.NotContains(t, w.Header().Get("Content-Type"), "text/html")
+		})
 	}
 }
 
