@@ -1455,6 +1455,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 	failureAccountSideEffectsApplied := false
 	var modelUnavailable atomic.Bool
+	var contextRejected atomic.Bool
 	relayResult, relayExit := openaiwsv2.RunEntry(openaiwsv2.EntryInput{
 		Ctx:                ctx,
 		ClientConn:         policyClientConn,
@@ -1585,7 +1586,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				)
 				if hooks != nil && hooks.AfterTurn != nil {
 					var turnErr error
-					if modelUnavailable.Load() {
+					if contextRejected.Swap(false) {
+						turnErr = errGatewayContextRejection
+						turnResult.ObservedUsageOnError = true
+						// A bare error has no normalized terminal type; it must
+						// still remain a failed turn for scheduler feedback.
+						turnResult.UpstreamTerminalEvent = turn.TerminalEventType
+					} else if modelUnavailable.Load() {
 						turnErr = ErrOpenAIWSModelUnavailable
 						turnResult.ObservedUsageOnError = true
 					}
@@ -1632,6 +1639,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 				eventType, _, _ := parseOpenAIWSEventEnvelope(payload)
 				regionalMeterObserveUsage(ctx, payload, eventType)
+				if (eventType == "error" || eventType == "response.failed") && IsUpstreamContextRejection(openAIStreamFailureStatus(payload, extractOpenAISSEErrorMessage(payload)), payload) {
+					contextRejected.Store(true)
+				}
 				if eventType == "response.created" {
 					failureAccountSideEffectsApplied = false
 				}

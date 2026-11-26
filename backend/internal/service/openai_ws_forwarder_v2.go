@@ -1057,6 +1057,10 @@ readLoop:
 				}
 				c.JSON(statusCode, gin.H{"error": fields})
 			}
+			if contextRejected {
+				MarkOpsRequestScopedError(c, "invalid_request_error")
+				return nil, errGatewayContextRejection
+			}
 			if openAIWSModelFailureStatus(account, message) != 0 {
 				return nil, ErrOpenAIWSModelUnavailable
 			}
@@ -1111,6 +1115,21 @@ readLoop:
 				markOpenAIWSClientVisibleFailure(c, eventType, message)
 			}
 			upstreamTerminalEvent = s.handleOpenAIWSTerminalTransientFailure(openAIWSForwardStreamPhaseContext(openAI429LeaseObservation(ctx, lease), wsOutputStarted, message), account, mappedModel, lease.HandshakeHeaders(), message)
+			if eventType == "response.failed" && IsUpstreamContextRejection(openAIStreamFailureStatus(message, extractOpenAISSEErrorMessage(message)), message) {
+				lease.MarkBroken()
+				flushStreamWriter(true)
+				MarkOpsRequestScopedError(c, "invalid_request_error")
+				if !reqStream && !clientDisconnected {
+					writeGatewayContextRejection(c, http.StatusBadRequest)
+				}
+				// Keep authoritative terminal usage while excluding this request
+				// rejection from account-health feedback and sticky success state.
+				result := resultWithUsage()
+				result.ObservedUsageOnError = true
+				result.ImageCount = imageCounter.Count()
+				result.ImageOutputSizes = imageCounter.Sizes()
+				return result, errGatewayContextRejection
+			}
 			if openAIWSModelFailureStatus(account, message) != 0 {
 				lease.MarkBroken()
 				flushStreamWriter(true)

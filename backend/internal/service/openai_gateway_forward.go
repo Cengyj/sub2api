@@ -1344,7 +1344,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		if fallbackReason == "" {
 			s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
-			if accelerateHTTPSSE && wsResult != nil {
+			preserveResult := accelerateHTTPSSE || (wsResult != nil && wsResult.ObservedUsageOnError)
+			if preserveResult && wsResult != nil {
 				wsResult.UpstreamModel = upstreamModel
 				if wsResult.BillingModel == "" {
 					wsResult.BillingModel = billingModel
@@ -1355,7 +1356,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					wsResult.BillingModel = imageBillingModel
 				}
 			}
-			if accelerateHTTPSSE {
+			if preserveResult {
 				return wsResult, wsErr
 			}
 			return nil, wsErr

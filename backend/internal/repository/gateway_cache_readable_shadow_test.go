@@ -93,8 +93,10 @@ func TestOpenAI409RedisLegacyIndexShrinksInBatches(t *testing.T) {
 	for i := range legacy {
 		legacy[i] = redis.Z{Score: score, Member: fmt.Sprintf("legacy-%04d", i)}
 	}
-	oldest := legacy[0].Member.(string)
-	last := legacy[len(legacy)-1].Member.(string)
+	oldest, ok := legacy[0].Member.(string)
+	require.True(t, ok)
+	last, ok := legacy[len(legacy)-1].Member.(string)
+	require.True(t, ok)
 	require.NoError(t, cache.rdb.Set(ctx, oldest, "oldest", time.Hour).Err())
 	require.NoError(t, cache.rdb.Set(ctx, last, "retained", time.Hour).Err())
 	require.NoError(t, cache.rdb.ZAdd(ctx, index, legacy...).Err())

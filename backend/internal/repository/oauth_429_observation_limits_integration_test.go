@@ -58,17 +58,26 @@ func TestOAuth429AccountEpochRejectsInflightAndPriorRun(t *testing.T) {
 	oldRun, err := repo.StartOAuth429Run(ctx, oldTask)
 	require.NoError(t, err)
 	require.NotNil(t, oldRun)
-	started := time.Now().UTC()
+	// Use the database's old epoch boundary so the fixture does not depend on
+	// clock synchronization between the test process and PostgreSQL container.
+	var started time.Time
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT valid_since FROM oauth_429_account_epochs WHERE account_id=$1`, a.ID).Scan(&started))
 	_, err = integrationDB.ExecContext(ctx, `UPDATE accounts SET schedulable=false WHERE id=$1`, a.ID)
 	require.NoError(t, err)
 	_, err = integrationDB.ExecContext(ctx, `UPDATE accounts SET schedulable=true WHERE id=$1`, a.ID)
 	require.NoError(t, err)
+	var currentBoundary time.Time
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT valid_since FROM oauth_429_account_epochs WHERE account_id=$1`, a.ID).Scan(&currentBoundary))
+	require.True(t, started.Before(currentBoundary))
 	// Headers arrive after resume, but the request began under the old epoch.
 	delayed := oauth429ObservationFixture(a.ID, "gpt-6-astra", c.Revision, 20, 429)
 	delayed.StartedAt = started
 	queued, err := repo.ObserveOAuth429(ctx, delayed)
 	require.NoError(t, err)
 	require.False(t, queued)
+	var delayedRecorded bool
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM oauth_429_request_dedup WHERE account_id=$1 AND model=$2 AND request_hash=$3)`, a.ID, delayed.Model, delayed.Request).Scan(&delayedRecorded))
+	require.False(t, delayedRecorded, "the old-epoch observation must be rejected, not accepted below the queue threshold")
 	for i := 21; i < 41; i++ {
 		q, e := repo.ObserveOAuth429(ctx, oauth429ObservationFixture(a.ID, "gpt-6-astra", c.Revision, i, 429))
 		require.NoError(t, e)

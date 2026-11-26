@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -166,6 +167,85 @@ func TestForwardOpenAIWSV2_MarksCyberPolicyForFailureEventShapes(t *testing.T) {
 			require.Equal(t, tt.wantInput, mark.UpstreamInTok)
 			require.Equal(t, tt.wantOutput, mark.UpstreamOutTok)
 		})
+	}
+}
+
+func TestForwardOpenAIWSV2_ContextRejectionPreservesSchedulerIdentity(t *testing.T) {
+	for _, event := range []string{"error", "response.failed"} {
+		for _, mode := range []string{"nonstream", "stream_buffered", "stream_after_output", "oauth_sse"} {
+			t.Run(event+"/"+mode, func(t *testing.T) {
+				stream := mode != "nonstream"
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+				cfg := newOpenAIWSV2TestConfig()
+				cfg.Security.URLAllowlist.Enabled = false
+				cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+				message := []byte(`{"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too long"}}`)
+				if event == "response.failed" {
+					message = []byte(`{"type":"response.failed","response":{"id":"context-rejected","status":"failed","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too long"},"usage":{"input_tokens":7,"output_tokens":0}}}`)
+				}
+				events := [][]byte{[]byte(`{"type":"response.created","response":{"id":"context-rejected"}}`)}
+				if mode == "stream_after_output" {
+					events = append(events, []byte(`{"type":"response.output_text.delta","delta":"partial"}`))
+				}
+				conn := &openAIWSCaptureConn{events: append(events, message)}
+				pool := newOpenAIWSConnPool(cfg)
+				t.Cleanup(pool.Close)
+				pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: conn})
+				httpUpstream := &httpUpstreamRecorder{}
+				svc := &OpenAIGatewayService{
+					cfg: cfg, httpUpstream: httpUpstream, cache: &stubGatewayCache{},
+					openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+					toolCorrector:    NewCodexToolCorrector(), openaiWSPool: pool,
+				}
+				account := &Account{
+					ID: 5885, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+					Status: StatusActive, Schedulable: true, Concurrency: 1,
+					Credentials: map[string]any{"api_key": "sk-test"},
+					Extra:       map[string]any{"responses_websockets_v2_enabled": true},
+				}
+				if mode == "oauth_sse" {
+					account = wsSSETestAccount()
+					SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+				}
+				result, err := svc.Forward(context.Background(), c, account, []byte(fmt.Sprintf(`{"model":"gpt-6-astra","stream":%t,"input":"hi"}`, stream)))
+				require.ErrorIs(t, err, errGatewayContextRejection)
+				require.Equal(t, 1, strings.Count(rec.Body.String(), "context_length_exceeded"), "emit the client rejection exactly once")
+				require.True(t, IsOpsRequestScopedError(c))
+				if !stream {
+					require.Equal(t, http.StatusBadRequest, rec.Code)
+				} else {
+					streamError, ok := GetOpsStreamError(c)
+					require.True(t, ok)
+					require.True(t, streamError.RequestScoped)
+					require.False(t, streamError.CountTowardsSLA)
+				}
+				if event == "response.failed" {
+					require.NotNil(t, result)
+					require.Equal(t, 7, result.Usage.InputTokens)
+					require.True(t, result.ObservedUsageOnError)
+					require.Equal(t, "response.failed", result.UpstreamTerminalEvent)
+					require.Equal(t, "gpt-6-astra", result.BillingModel)
+				}
+				// A rejected request must not replay or leave a reusable connection/response.
+				require.Empty(t, httpUpstream.requests)
+				conn.mu.Lock()
+				writes, closed := len(conn.writes), conn.closed
+				conn.mu.Unlock()
+				require.Equal(t, 1, writes)
+				require.True(t, closed)
+				store := svc.getOpenAIWSStateStore()
+				_, bound := store.GetResponseConn("context-rejected")
+				require.False(t, bound)
+				boundAccount, bindErr := store.GetResponseAccount(context.Background(), 0, "context-rejected")
+				require.NoError(t, bindErr)
+				require.Zero(t, boundAccount)
+				// The handler passes this exact error to scheduler feedback.
+				require.False(t, svc.ReportOpenAIAccountScheduleResult(account, "gpt-6-astra", false, nil, err))
+				require.Nil(t, svc.openaiScheduler)
+			})
+		}
 	}
 }
 
