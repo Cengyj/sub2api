@@ -23,6 +23,8 @@ func (s *UpdateCacheSuite) SetupTest() {
 }
 
 func (s *UpdateCacheSuite) TestGetUpdateInfo_Missing() {
+	// Earlier versions cached releases from a different repository under this key.
+	require.NoError(s.T(), s.rdb.Set(s.ctx, "update:latest", "upstream", time.Minute).Err())
 	_, err := s.cache.GetUpdateInfo(s.ctx)
 	require.True(s.T(), errors.Is(err, redis.Nil), "expected redis.Nil for missing update info")
 }

@@ -15,8 +15,10 @@ import urllib.parse
 import urllib.request
 import uuid
 
-REPO = 'ranxi2001/sub2api'
-IMAGE = 'ghcr.io/' + REPO
+REPO = 'Cengyj/sub2api'
+IMAGE_REPO = REPO.lower()
+IMAGE = 'ghcr.io/' + IMAGE_REPO
+UPSTREAM_IMAGE = 'ghcr.io/ranxi2001/sub2api'
 VERSION = re.compile(r'^v[0-9]+[.][0-9]+[.][0-9]+$')
 SHA = re.compile(r'^[0-9a-f]{40}$')
 DIGEST = re.compile(r'^sha256:[0-9a-f]{64}$')
@@ -75,7 +77,7 @@ def resolve_release(version):
 
 
 def resolve_image(tag, arch, commit):
-    query = urllib.parse.urlencode({'service': 'ghcr.io', 'scope': 'repository:' + REPO + ':pull'})
+    query = urllib.parse.urlencode({'service': 'ghcr.io', 'scope': 'repository:' + IMAGE_REPO + ':pull'})
     token = json.loads(fetch('https://ghcr.io/token?' + query))['token']
     headers = {'Authorization': 'Bearer ' + token, 'Accept': ', '.join([
         'application/vnd.oci.image.index.v1+json',
@@ -84,7 +86,7 @@ def resolve_image(tag, arch, commit):
         'application/vnd.docker.distribution.manifest.v2+json'])}
 
     def get(kind, ref):
-        raw = fetch('https://ghcr.io/v2/' + REPO + '/' + kind + '/' + ref, headers)
+        raw = fetch('https://ghcr.io/v2/' + IMAGE_REPO + '/' + kind + '/' + ref, headers)
         digest = 'sha256:' + hashlib.sha256(raw).hexdigest()
         if ref.startswith('sha256:') and digest != ref:
             raise ValueError('OCI content digest mismatch')
@@ -120,7 +122,7 @@ def replacement(before, image, binary_sha, container_name):
     matches[0]['image'] = image
     for c in after['spec'].get('initContainers', []):
         if c['image'] != old_image:
-            if c['image'].startswith(IMAGE + '@') or c['image'].startswith(IMAGE + ':'):
+            if c['image'].startswith((IMAGE + '@', IMAGE + ':', UPSTREAM_IMAGE + '@', UPSTREAM_IMAGE + ':')):
                 raise ValueError('Sub2API init image differs from the application')
             continue
         c['image'] = image

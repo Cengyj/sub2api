@@ -30,12 +30,9 @@ var (
 )
 
 const (
-	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	// Releases are maintained on the owner-controlled production fork. Keep the
-	// updater independent from the upstream repository so production installs
-	// see our release stream and can update to our fork's assets.
-	githubRepo = "ranxi2001/sub2api"
+	// GitHubReleaseRepo identifies the release source for updates and rollbacks.
+	GitHubReleaseRepo = "Cengyj/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -404,7 +401,7 @@ func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) e
 // fetchRollbackCandidates fetches recent releases and keeps the newest
 // maxRollbackVersions entries strictly older than the current version.
 func (s *UpdateService) fetchRollbackCandidates(ctx context.Context) ([]*GitHubRelease, error) {
-	releases, err := s.githubClient.FetchRecentReleases(ctx, githubRepo, rollbackFetchPageSize)
+	releases, err := s.githubClient.FetchRecentReleases(ctx, GitHubReleaseRepo, rollbackFetchPageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +438,7 @@ func (s *UpdateService) fetchRollbackCandidates(ctx context.Context) ([]*GitHubR
 }
 
 func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, error) {
-	release, err := s.githubClient.FetchLatestRelease(ctx, githubRepo)
+	release, err := s.githubClient.FetchLatestRelease(ctx, GitHubReleaseRepo)
 	if err != nil {
 		return nil, err
 	}

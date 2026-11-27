@@ -53,9 +53,20 @@ class UpgradeTests(unittest.TestCase):
 
     def test_different_application_init_image_rejected(self):
         before = workload()
-        before['spec']['template']['spec']['initContainers'][0]['image'] = u.IMAGE + ':old'
-        with self.assertRaises(ValueError):
-            u.replacement(before, 'new', 'd' * 64, 'sub2api')
+        for repo in (u.IMAGE, u.UPSTREAM_IMAGE):
+            with self.subTest(repo=repo), self.assertRaises(ValueError):
+                before['spec']['template']['spec']['initContainers'][0]['image'] = repo + ':old'
+                u.replacement(before, 'new', 'd' * 64, 'sub2api')
+
+    def test_migrates_matching_upstream_application_and_init_image(self):
+        before = workload()
+        spec = before['spec']['template']['spec']
+        for container in (spec['containers'][0], spec['initContainers'][0]):
+            container['image'] = u.UPSTREAM_IMAGE + ':2.25.3'
+        target = u.IMAGE + '@sha256:' + 'c' * 64
+        after = u.replacement(before, target, 'd' * 64, 'sub2api')['spec']
+        self.assertEqual(after['containers'][0]['image'], target)
+        self.assertEqual(after['initContainers'][0]['image'], target)
 
     def test_rollback_uses_current_resource_version(self):
         before = workload()

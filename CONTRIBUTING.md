@@ -1,8 +1,8 @@
 # 贡献指南
 
-本指南适用于 [ranxi2001/sub2api](https://github.com/ranxi2001/sub2api)。欢迎提交可复现的 Bug、功能建议、文档修正、测试和代码改进。中文或英文均可，保留错误消息、字段名和命令的原文。
+本指南适用于 [Cengyj/sub2api](https://github.com/Cengyj/sub2api)。欢迎提交可复现的 Bug、功能建议、文档修正、测试和代码改进。中文或英文均可，保留错误消息、字段名和命令的原文。
 
-本 fork 以 `production` 为默认开发和 PR 目标分支，按需引入 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) 的更新。提交前核实仓库与 base 分支，避免把 PR 发到上游 `main`。运维 CLI、监控及生产部署脚本属于 [sub2api-operate](https://github.com/ranxi2001/sub2api-operate)，应用源码改动提交到本仓库。
+本 fork 以 `production` 为默认开发和 PR 目标分支，按需引入 [ranxi2001/sub2api](https://github.com/ranxi2001/sub2api) 的更新。提交前核实仓库与 base 分支，避免把 PR 发到上游 `main`。运维 CLI、监控及生产部署脚本属于 [sub2api-operate](https://github.com/ranxi2001/sub2api-operate)，应用源码改动提交到本仓库。
 
 ## Agent 使用建议与披露
 
@@ -20,7 +20,7 @@
 
 ## 选择合适的入口
 
-从 [Issue 选择页](https://github.com/ranxi2001/sub2api/issues/new/choose) 选择表单：
+从[上游 Issue 选择页](https://github.com/ranxi2001/sub2api/issues/new/choose) 选择表单：
 
 | 类型 | 适用情况 | 重点提供 |
 | --- | --- | --- |
@@ -156,7 +156,7 @@ Fork 本仓库后，下面示例中的 `origin` 是自己的 fork，`project` �
 # 将 YOUR_GITHUB_LOGIN 替换为自己的 GitHub 用户名。
 git clone https://github.com/YOUR_GITHUB_LOGIN/sub2api.git
 cd sub2api
-git remote add project https://github.com/ranxi2001/sub2api.git
+git remote add project https://github.com/Cengyj/sub2api.git
 git fetch project production
 git switch -c fix/describe-the-change project/production
 ```
